@@ -16,6 +16,8 @@ export interface InspectionFilterResult {
   filteredInspections: Inspection[];
   /** 过滤点位上未整改的整改条目 */
   pendingRectifies: RectifyPlan[];
+  /** 因核验变化而失效（保留备查）的整改条目 */
+  invalidRectifies: RectifyPlan[];
   pointMap: Map<string, AccessPoint>;
   /** 每个点位最新一次核验 */
   latestByPoint: Map<string, Inspection>;
@@ -61,8 +63,11 @@ export function useInspectionFilter(): InspectionFilterResult {
   const latestByPoint = useMemo(() => {
     const map = new Map<string, Inspection>();
     for (const i of inspections) {
+      if (i.superseded) continue;
       const cur = map.get(i.pointId);
-      if (!cur || cur.date < i.date) map.set(i.pointId, i);
+      if (!cur || cur.date < i.date || (cur.date === i.date && cur.collectedAt < i.collectedAt)) {
+        map.set(i.pointId, i);
+      }
     }
     return map;
   }, [inspections]);
@@ -70,13 +75,22 @@ export function useInspectionFilter(): InspectionFilterResult {
   const pendingRectifies = useMemo(
     () =>
       rectifies
-        .filter((r) => filteredPointIds.has(r.pointId) && r.status !== '已整改')
+        .filter((r) => filteredPointIds.has(r.pointId) && r.status !== '已整改' && !r.invalid)
         .sort((a, b) => {
           const ao = isOverdue(a.deadline, a.status) ? 0 : 1;
           const bo = isOverdue(b.deadline, b.status) ? 0 : 1;
           if (ao !== bo) return ao - bo;
           return a.deadline < b.deadline ? -1 : 1;
         }),
+    [rectifies, filteredPointIds],
+  );
+
+  /** 因核验记录变化而失效、保留备查的整改条目 */
+  const invalidRectifies = useMemo(
+    () =>
+      rectifies
+        .filter((r) => filteredPointIds.has(r.pointId) && r.invalid)
+        .sort((a, b) => ((a.invalidReason?.at ?? '') < (b.invalidReason?.at ?? '') ? 1 : -1)),
     [rectifies, filteredPointIds],
   );
 
@@ -98,6 +112,7 @@ export function useInspectionFilter(): InspectionFilterResult {
     filteredPoints,
     filteredInspections,
     pendingRectifies,
+    invalidRectifies,
     pointMap,
     latestByPoint,
     passRate,

@@ -79,3 +79,7 @@ body {
 .gb-overdue-row > td {
   background: #fff1f0 !important;
 }
+
+.gb-invalid-row > td {
+  background: #fffbe6 !important;
+}

@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import {
   App,
+  Alert,
   Button,
   Card,
   Col,
@@ -43,7 +44,12 @@ export default function Rectify() {
   const [saving, setSaving] = useState(false);
 
   const scoped = useMemo(
-    () => rectifies.filter((r) => pointMap.has(r.pointId)),
+    () => rectifies.filter((r) => pointMap.has(r.pointId) && !r.invalid),
+    [rectifies, pointMap],
+  );
+
+  const invalidScoped = useMemo(
+    () => rectifies.filter((r) => pointMap.has(r.pointId) && r.invalid),
     [rectifies, pointMap],
   );
 
@@ -267,6 +273,39 @@ export default function Rectify() {
           }
         />
       )}
+
+      {invalidScoped.length ? (
+        <Card
+          size="small"
+          style={{ marginTop: 16 }}
+          title={
+            <Space size={8}>
+              <span>已失效并完成重算的旧整改条目（保留备查）</span>
+              <Tag>{invalidScoped.length}</Tag>
+            </Space>
+          }
+        >
+          <Space direction="vertical" size={10} style={{ width: '100%' }}>
+            {invalidScoped.map((r) => (
+              <Alert
+                key={r.id}
+                type="warning"
+                showIcon
+                data-testid="invalid-rectify-row"
+                message={
+                  <Space size={8} wrap>
+                    <Typography.Text delete type="secondary">
+                      {r.requirement}
+                    </Typography.Text>
+                    <Tag>{pointMap.get(r.pointId)?.name ?? r.pointId}</Tag>
+                  </Space>
+                }
+                description={r.invalidReason?.reason ?? '核验记录变化，条目失效'}
+              />
+            ))}
+          </Space>
+        </Card>
+      ) : null}
 
       <Modal
         title={editing ? `登记复检 · ${pointMap.get(editing.pointId)?.name ?? editing.pointId}` : '登记复检'}

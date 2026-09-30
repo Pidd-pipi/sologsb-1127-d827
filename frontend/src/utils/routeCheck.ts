@@ -70,13 +70,22 @@ export function judgeSegment(seg: Pick<RouteSegment, 'curbHeight' | 'stepCount' 
   return { passable: reasons.length === 0, reasons };
 }
 
-/** 全线判定：逐段判定后汇总 */
+/** 全线判定：逐段判定后汇总（编制中的草稿路段没有失效字段，按有效处理） */
 export function buildVerdict(
   routeName: string,
-  segments: Pick<
-    RouteSegment,
-    'curbHeight' | 'stepCount' | 'obstacleCount' | 'length' | 'order' | 'fromPointId' | 'toPointId'
-  >[],
+  segments: Array<
+    Pick<
+      RouteSegment,
+      | 'curbHeight'
+      | 'stepCount'
+      | 'obstacleCount'
+      | 'length'
+      | 'order'
+      | 'fromPointId'
+      | 'toPointId'
+    > &
+      Partial<Pick<RouteSegment, 'invalid' | 'invalidReason'>>
+  >,
 ): RouteVerdict {
   const ordered = [...segments].sort((a, b) => a.order - b.order);
   const totalLength = Math.round(ordered.reduce((n, s) => n + (Number(s.length) || 0), 0) * 10) / 10;
@@ -84,19 +93,27 @@ export function buildVerdict(
   const totalSteps = ordered.reduce((n, s) => n + (Number(s.stepCount) || 0), 0);
   const maxCurbHeight = ordered.reduce((n, s) => Math.max(n, Number(s.curbHeight) || 0), 0);
   const reasons: string[] = [];
+  const invalidReasons: string[] = [];
   ordered.forEach((s) => {
+    if (s.invalid) {
+      invalidReasons.push(`第 ${s.order} 段：${s.invalidReason?.reason ?? '核验记录变化，判定失效'}`);
+      return;
+    }
     const r = judgeSegment(s);
     if (!r.passable) {
       reasons.push(`第 ${s.order} 段：${r.reasons.join('；')}`);
     }
   });
+  const hasInvalid = invalidReasons.length > 0;
   return {
     routeName,
-    passable: reasons.length === 0 && ordered.length > 0,
+    passable: reasons.length === 0 && ordered.length > 0 && !hasInvalid,
     totalLength,
     totalObstacles,
     totalSteps,
     maxCurbHeight,
     reasons: ordered.length === 0 ? ['尚未串联路段'] : reasons,
+    hasInvalid,
+    invalidReasons,
   };
 }

@@ -26,12 +26,18 @@ export default function MapView() {
 
   const latestOf = (pointId: string) =>
     inspections
-      .filter((i) => i.pointId === pointId)
-      .sort((a, b) => (a.date < b.date ? 1 : -1))[0];
+      .filter((i) => i.pointId === pointId && !i.superseded)
+      .sort((a, b) =>
+        a.date === b.date ? (a.collectedAt < b.collectedAt ? 1 : -1) : a.date < b.date ? 1 : -1,
+      )[0];
 
   const active = points.find((p) => p.id === activeId);
   const activeInspections = active
-    ? inspections.filter((i) => i.pointId === active.id).sort((a, b) => (a.date < b.date ? 1 : -1))
+    ? inspections
+        .filter((i) => i.pointId === active.id && !i.superseded)
+        .sort((a, b) =>
+          a.date === b.date ? (a.collectedAt < b.collectedAt ? 1 : -1) : a.date < b.date ? 1 : -1,
+        )
     : [];
   const activePlans = active ? rectifies.filter((r) => r.pointId === active.id) : [];
 

@@ -7,6 +7,7 @@ import {
   NodeIndexOutlined,
   ToolOutlined,
   DatabaseOutlined,
+  ImportOutlined,
 } from '@ant-design/icons';
 import { Link, Outlet, useLocation } from 'react-router-dom';
 import { usePointStore } from '../stores/pointStore';
@@ -17,6 +18,7 @@ const { Sider, Content, Header } = Layout;
 const MENU = [
   { key: '/', icon: <HomeOutlined />, label: '核验总览' },
   { key: '/points/new', icon: <PlusCircleOutlined />, label: '点位登记' },
+  { key: '/import', icon: <ImportOutlined />, label: '离线核验包' },
   { key: '/routes', icon: <NodeIndexOutlined />, label: '通行路线' },
   { key: '/map', icon: <EnvironmentOutlined />, label: '设施地图' },
   { key: '/rectify', icon: <ToolOutlined />, label: '整改清单' },

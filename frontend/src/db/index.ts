@@ -3,6 +3,7 @@ import type { AccessPoint } from '../types/point';
 import type { Inspection } from '../types/inspection';
 import type { RouteSegment } from '../types/route';
 import type { RectifyPlan } from '../types/rectify';
+import type { ImportCheckpoint } from '../types/offline';
 import { addDays, makeId, todayStr, toPlain } from '../utils/format';
 import { judgeInspection } from '../utils/routeCheck';
 
@@ -13,12 +14,14 @@ export const DB_NAME = 'gbaccessmap-db';
  * v1 建 points / inspections
  * v2 加 routes 表与 pointId 索引
  * v3 加 rectifies 表，并为历史不合格核验补建整改条目
+ * v4 核验加采集时间/来源/手工更正/覆盖字段，整改与路段加失效标记，新增 importCheckpoints 检查点表
  */
 class AccessMapDb extends Dexie {
   points!: Table<AccessPoint, string>;
   inspections!: Table<Inspection, string>;
   routes!: Table<RouteSegment, string>;
   rectifies!: Table<RectifyPlan, string>;
+  importCheckpoints!: Table<ImportCheckpoint, string>;
 
   constructor() {
     super(DB_NAME);
@@ -68,8 +71,55 @@ class AccessMapDb extends Dexie {
             deadline: addDays(insp.date || todayStr(), 30),
             recheckDate: '',
             status: '待整改',
+            source: 'auto',
+            invalid: false,
+            invalidReason: null,
+            fromInspectionId: insp.id,
             createdAt: new Date().toISOString(),
           });
+        }
+      });
+    this.version(4)
+      .stores({
+        points: 'id, code, facilityType, district, name',
+        inspections: 'id, pointId, date, conclusion, clientId, superseded',
+        routes: 'id, routeName, fromPointId, toPointId, order',
+        rectifies: 'id, pointId, status, deadline',
+        importCheckpoints: 'batchId, status, updatedAt',
+      })
+      .upgrade(async (tx) => {
+        // v4：为历史核验补采集时间/来源/覆盖/手工更正字段
+        const inspTable = tx.table('inspections');
+        const inspections: Inspection[] = await inspTable.toArray();
+        for (const insp of inspections) {
+          const collectedAt =
+            insp.collectedAt || new Date(`${insp.date}T12:00:00`).toISOString();
+          await inspTable.update(insp.id, {
+            collectedAt,
+            source: insp.source || 'manual',
+            superseded: false,
+            supersededById: '',
+            manualFields: [],
+            manualAt: '',
+            clientId: insp.clientId || `legacy-${insp.id}`,
+          });
+        }
+        // 历史整改条目一律视为人工登记，避免升级后被联动逻辑误失效
+        const rctTable = tx.table('rectifies');
+        const rectifies: RectifyPlan[] = await rctTable.toArray();
+        for (const r of rectifies) {
+          await rctTable.update(r.id, {
+            source: r.source || 'manual',
+            invalid: false,
+            invalidReason: null,
+            fromInspectionId: r.fromInspectionId || '',
+          });
+        }
+        // 历史路段默认判定有效
+        const routeTable = tx.table('routes');
+        const segments: RouteSegment[] = await routeTable.toArray();
+        for (const seg of segments) {
+          await routeTable.update(seg.id, { invalid: false, invalidReason: null });
         }
       });
   }
@@ -323,6 +373,13 @@ function buildSeed() {
       occupied: s.occupied,
       conclusion: judged.conclusion,
       problem: s.problem,
+      collectedAt: new Date(`${s.date}T09:${`${(i * 7) % 60}`.padStart(2, '0')}:00`).toISOString(),
+      source: 'manual',
+      superseded: false,
+      supersededById: '',
+      manualFields: [],
+      manualAt: '',
+      clientId: `seed-client-${i + 1}`,
       createdAt: now,
     };
   });
@@ -340,6 +397,8 @@ function buildSeed() {
         curbHeight: r.curbHeight,
         wheelchairPassable: r.stepCount === 0 && r.curbHeight <= 3 && r.obstacleCount <= 2,
         order: i,
+        invalid: false,
+        invalidReason: null,
         createdAt: now,
       });
     }
@@ -353,6 +412,10 @@ function buildSeed() {
       deadline: addDays(today, -21),
       recheckDate: '',
       status: '待整改',
+      source: 'auto',
+      invalid: false,
+      invalidReason: null,
+      fromInspectionId: 'ins-seed-7',
       createdAt: now,
     },
     {
@@ -363,6 +426,10 @@ function buildSeed() {
       deadline: addDays(today, -6),
       recheckDate: '',
       status: '待整改',
+      source: 'auto',
+      invalid: false,
+      invalidReason: null,
+      fromInspectionId: 'ins-seed-2',
       createdAt: now,
     },
     {
@@ -373,6 +440,10 @@ function buildSeed() {
       deadline: addDays(today, 18),
       recheckDate: '',
       status: '待整改',
+      source: 'auto',
+      invalid: false,
+      invalidReason: null,
+      fromInspectionId: 'ins-seed-4',
       createdAt: now,
     },
     {
@@ -383,6 +454,10 @@ function buildSeed() {
       deadline: addDays(today, -40),
       recheckDate: addDays(today, -12),
       status: '已整改',
+      source: 'manual',
+      invalid: false,
+      invalidReason: null,
+      fromInspectionId: '',
       createdAt: now,
     },
   ];

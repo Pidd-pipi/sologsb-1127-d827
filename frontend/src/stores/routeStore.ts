@@ -38,6 +38,10 @@ interface RouteState {
   computeVerdict: () => RouteVerdict;
   saveRoute: () => Promise<number>;
   resetDraft: () => void;
+  /** 重新拉取已存路段（核验联动失效后回流界面） */
+  reloadRoutes: () => Promise<void>;
+  /** 对失效路段重新实测：旧失效记录保留，写入一条有效新判定 */
+  recomputeSegment: (id: string, patch: Partial<DraftSegment>) => Promise<void>;
 }
 
 function newKey(): string {
@@ -140,18 +144,41 @@ export const useRouteStore = create<RouteState>((set, get) => ({
         curbHeight: seg.curbHeight,
         wheelchairPassable: judgeSegment(seg).passable,
         order: seg.order,
+        invalid: false,
+        invalidReason: null,
         createdAt: new Date().toISOString(),
       }),
     );
     if (!rows.length) return 0;
     await db.routes.bulkPut(rows);
+    await get().reloadRoutes();
+    return rows.length;
+  },
+
+  reloadRoutes: async () => {
     const all = await db.routes.toArray();
     set({
       segments: all.sort((a, b) =>
         a.routeName === b.routeName ? a.order - b.order : a.routeName.localeCompare(b.routeName),
       ),
     });
-    return rows.length;
+  },
+
+  recomputeSegment: async (id, patch) => {
+    const old = await db.routes.get(id);
+    if (!old) throw new Error('路段不存在或已被删除');
+    const next: RouteSegment = toPlain({
+      ...old,
+      ...patch,
+      // 重算产生的是一条新的有效记录，旧失效记录保留备查
+      id: makeId('rts'),
+      invalid: false,
+      invalidReason: null,
+      wheelchairPassable: judgeSegment({ ...old, ...patch }).passable,
+      createdAt: new Date().toISOString(),
+    });
+    await db.routes.put(next);
+    await get().reloadRoutes();
   },
 
   resetDraft: () => set({ draftSegments: [], verdict: null, chain: [] }),

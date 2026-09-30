@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import {
   App,
+  Alert,
   Button,
   Card,
   Col,
@@ -8,6 +9,8 @@ import {
   Divider,
   Form,
   Input,
+  InputNumber,
+  Modal,
   Row,
   Select,
   Space,
@@ -15,10 +18,11 @@ import {
   Switch,
   Table,
   Tag,
+  Tooltip,
   Typography,
 } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
-import { PlusOutlined, SaveOutlined, ReloadOutlined } from '@ant-design/icons';
+import { EditOutlined, PlusOutlined, SaveOutlined, ReloadOutlined } from '@ant-design/icons';
 import { Link, useParams } from 'react-router-dom';
 import MapPanel from '../components/common/MapPanel';
 import MeasureInput from '../components/common/MeasureInput';
@@ -26,7 +30,12 @@ import StatusBadge from '../components/common/StatusBadge';
 import FacilityIcon from '../components/common/FacilityIcon';
 import EmptyState from '../components/common/EmptyState';
 import { usePointStore } from '../stores/pointStore';
-import { OCCUPIED_LEVELS, type Inspection, type OccupiedLevel } from '../types/inspection';
+import {
+  OCCUPIED_LEVELS,
+  type Inspection,
+  type InspectionCorrection,
+  type OccupiedLevel,
+} from '../types/inspection';
 import type { RectifyPlan } from '../types/rectify';
 import { judgeInspection } from '../utils/routeCheck';
 import { addDays, isOverdue, todayStr } from '../utils/format';
@@ -51,6 +60,7 @@ export default function PointDetail() {
   const loaded = usePointStore((s) => s.loaded);
   const addInspection = usePointStore((s) => s.addInspection);
   const addRectify = usePointStore((s) => s.addRectify);
+  const correctInspection = usePointStore((s) => s.correctInspection);
 
   const point = useMemo(() => points.find((p) => p.id === id), [points, id]);
   const history = useMemo(
@@ -62,7 +72,18 @@ export default function PointDetail() {
   );
   const plans = useMemo(
     () =>
-      rectifies.filter((r) => r.pointId === id).sort((a, b) => (a.deadline < b.deadline ? -1 : 1)),
+      rectifies
+        .filter((r) => r.pointId === id && !r.invalid)
+        .sort((a, b) => (a.deadline < b.deadline ? -1 : 1)),
+    [rectifies, id],
+  );
+  const invalidPlans = useMemo(
+    () =>
+      rectifies
+        .filter((r) => r.pointId === id && r.invalid)
+        .sort((a, b) =>
+          (a.invalidReason?.at ?? '') < (b.invalidReason?.at ?? '') ? 1 : -1,
+        ),
     [rectifies, id],
   );
 
@@ -77,6 +98,37 @@ export default function PointDetail() {
     problem: '',
   }));
   const [saving, setSaving] = useState(false);
+
+  /** 手工更正弹窗 */
+  const [correcting, setCorrecting] = useState<Inspection | null>(null);
+  const [correction, setCorrection] = useState<InspectionCorrection>({});
+  const [correctingSaving, setCorrectingSaving] = useState(false);
+
+  const openCorrection = (row: Inspection) => {
+    setCorrecting(row);
+    setCorrection({
+      slope: row.slope,
+      clearWidth: row.clearWidth,
+      hasHandrail: row.hasHandrail,
+      tactileContinuous: row.tactileContinuous,
+      occupied: row.occupied,
+      problem: row.problem,
+    });
+  };
+
+  const handleCorrection = async () => {
+    if (!correcting) return;
+    setCorrectingSaving(true);
+    try {
+      await correctInspection(correcting.id, correction);
+      message.success('已按更正内容重判结论并联动重算整改与路线（更正字段不再被离线包回退）');
+      setCorrecting(null);
+    } catch (e) {
+      message.error(`手工更正失败：${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setCorrectingSaving(false);
+    }
+  };
 
   const judgement = useMemo(
     () =>
@@ -156,23 +208,49 @@ export default function PointDetail() {
   };
 
   const inspectionColumns: ColumnsType<Inspection> = [
-    { title: '核验日期', dataIndex: 'date', width: 120, sorter: (a, b) => (a.date < b.date ? -1 : 1) },
-    { title: '核验人', dataIndex: 'inspector', width: 130 },
-    { title: '坡度', dataIndex: 'slope', width: 80, render: (v: number) => `${v}%` },
-    { title: '净宽', dataIndex: 'clearWidth', width: 90, render: (v: number) => `${v} cm` },
-    { title: '扶手', dataIndex: 'hasHandrail', width: 70, render: (v: boolean) => (v ? '有' : '无') },
+    { title: '核验日期', dataIndex: 'date', width: 110, sorter: (a, b) => (a.date < b.date ? -1 : 1) },
+    {
+      title: '采集时间',
+      dataIndex: 'collectedAt',
+      width: 150,
+      render: (v: string, row) => (
+        <Space direction="vertical" size={0}>
+          <span>{v ? v.replace('T', ' ').slice(0, 16) : '—'}</span>
+          <Space size={4} wrap>
+            {row.source === 'offline' ? <Tag color="geekblue">离线包</Tag> : <Tag>现场录入</Tag>}
+            {row.manualFields.length ? <Tag color="purple">已手工更正</Tag> : null}
+          </Space>
+        </Space>
+      ),
+    },
+    { title: '核验人', dataIndex: 'inspector', width: 120 },
+    { title: '坡度', dataIndex: 'slope', width: 70, render: (v: number) => `${v}%` },
+    { title: '净宽', dataIndex: 'clearWidth', width: 80, render: (v: number) => `${v} cm` },
+    { title: '扶手', dataIndex: 'hasHandrail', width: 60, render: (v: boolean) => (v ? '有' : '无') },
     {
       title: '盲道',
       dataIndex: 'tactileContinuous',
-      width: 80,
+      width: 70,
       render: (v: boolean) => (v ? '连续' : '断续'),
     },
-    { title: '占用情况', dataIndex: 'occupied', width: 100 },
+    { title: '占用情况', dataIndex: 'occupied', width: 90 },
     {
       title: '结论',
       dataIndex: 'conclusion',
       width: 110,
-      render: (v: string) => <StatusBadge value={v} kind="conclusion" />,
+      render: (v: string, row) =>
+        row.superseded ? (
+          <Tooltip title={`已被采集时间更晚的核验（${row.supersededById}）覆盖，记录保留备查`}>
+            <Space direction="vertical" size={0}>
+              <StatusBadge value={v} kind="conclusion" />
+              <Tag color="default" style={{ marginInlineEnd: 0 }}>
+                已覆盖
+              </Tag>
+            </Space>
+          </Tooltip>
+        ) : (
+          <StatusBadge value={v} kind="conclusion" />
+        ),
     },
     {
       title: '问题描述',
@@ -180,11 +258,31 @@ export default function PointDetail() {
       ellipsis: true,
       render: (v: string) => v || <Typography.Text type="secondary">无</Typography.Text>,
     },
+    {
+      title: '操作',
+      width: 80,
+      render: (_, row) => (
+        <Button
+          size="small"
+          icon={<EditOutlined />}
+          onClick={() => openCorrection(row)}
+          data-testid={`correct-${row.id}`}
+        >
+          更正
+        </Button>
+      ),
+    },
   ];
 
   const rectifyColumns: ColumnsType<RectifyPlan> = [
     { title: '整改要求', dataIndex: 'requirement', ellipsis: true },
-    { title: '责任单位', dataIndex: 'unit', width: 170 },
+    {
+      title: '来源',
+      dataIndex: 'source',
+      width: 90,
+      render: (v: string) => (v === 'auto' ? <Tag color="geekblue">核验联动</Tag> : <Tag>人工登记</Tag>),
+    },
+    { title: '责任单位', dataIndex: 'unit', width: 150 },
     {
       title: '整改期限',
       dataIndex: 'deadline',
@@ -213,7 +311,7 @@ export default function PointDetail() {
     },
   ];
 
-  const latest = history[0];
+  const latest = history.find((i) => !i.superseded);
 
   return (
     <div>
@@ -411,8 +509,8 @@ export default function PointDetail() {
           <Table<RectifyPlan> rowKey="id" size="small" pagination={false} dataSource={plans} columns={rectifyColumns} />
         ) : (
           <EmptyState
-            title="暂无整改条目"
-            description="核验结论为不合格时会自动生成整改条目"
+            title="暂无有效整改条目"
+            description="核验结论为不合格时会自动生成整改条目；被新核验失效的旧条目见下方"
             extra={
               <Button onClick={handleCreateRectify} data-testid="empty-gen-rectify">
                 手动生成整改条目
@@ -422,6 +520,125 @@ export default function PointDetail() {
           />
         )}
       </Card>
+
+      {invalidPlans.length ? (
+        <Card
+          size="small"
+          style={{ marginTop: 16 }}
+          title={
+            <Space size={8}>
+              <span>已失效整改条目（旧记录保留）</span>
+              <Tag color="default">{invalidPlans.length}</Tag>
+            </Space>
+          }
+        >
+          <Space direction="vertical" size={10} style={{ width: '100%' }}>
+            {invalidPlans.map((r) => (
+              <Alert
+                key={r.id}
+                type="warning"
+                showIcon
+                data-testid="invalid-rectify"
+                message={
+                  <Space size={8} wrap>
+                    <StatusBadge value={r.status} kind="rectify" />
+                    <Typography.Text delete type="secondary">
+                      {r.requirement}
+                    </Typography.Text>
+                  </Space>
+                }
+                description={r.invalidReason?.reason}
+              />
+            ))}
+          </Space>
+        </Card>
+      ) : null}
+
+      <Modal
+        title={correcting ? `手工更正核验 · ${correcting.date}` : '手工更正核验'}
+        open={Boolean(correcting)}
+        onCancel={() => setCorrecting(null)}
+        onOk={handleCorrection}
+        confirmLoading={correctingSaving}
+        okText="保存更正并重算"
+        destroyOnClose
+        width={640}
+      >
+        {correcting ? (
+          <Space direction="vertical" size={12} style={{ width: '100%' }}>
+            <Alert
+              type="info"
+              showIcon
+              message="更正后的字段会被标记为手工更正：之后同点位同日的离线核验包不再回退这些字段；结论按更正后实测值重判，并联动失效重算整改条目与通行路线。"
+            />
+            <Row gutter={12}>
+              <Col span={12}>
+                <Form.Item label="坡度 %" style={{ marginBottom: 8 }}>
+                  <InputNumber
+                    min={0}
+                    max={100}
+                    step={0.1}
+                    style={{ width: '100%' }}
+                    value={correction.slope}
+                    onChange={(v) => setCorrection((c) => ({ ...c, slope: Number(v ?? 0) }))}
+                    data-testid="correct-slope"
+                  />
+                </Form.Item>
+              </Col>
+              <Col span={12}>
+                <Form.Item label="净宽 cm" style={{ marginBottom: 8 }}>
+                  <InputNumber
+                    min={0}
+                    max={500}
+                    style={{ width: '100%' }}
+                    value={correction.clearWidth}
+                    onChange={(v) => setCorrection((c) => ({ ...c, clearWidth: Number(v ?? 0) }))}
+                    data-testid="correct-width"
+                  />
+                </Form.Item>
+              </Col>
+              <Col span={8}>
+                <Form.Item label="扶手" style={{ marginBottom: 8 }}>
+                  <Switch
+                    checked={correction.hasHandrail}
+                    onChange={(v) => setCorrection((c) => ({ ...c, hasHandrail: v }))}
+                    checkedChildren="有"
+                    unCheckedChildren="无"
+                  />
+                </Form.Item>
+              </Col>
+              <Col span={8}>
+                <Form.Item label="盲道连续" style={{ marginBottom: 8 }}>
+                  <Switch
+                    checked={correction.tactileContinuous}
+                    onChange={(v) => setCorrection((c) => ({ ...c, tactileContinuous: v }))}
+                    checkedChildren="连续"
+                    unCheckedChildren="断续"
+                  />
+                </Form.Item>
+              </Col>
+              <Col span={8}>
+                <Form.Item label="被占用情况" style={{ marginBottom: 8 }}>
+                  <Select
+                    style={{ width: '100%' }}
+                    value={correction.occupied}
+                    onChange={(v) => setCorrection((c) => ({ ...c, occupied: v }))}
+                    options={OCCUPIED_LEVELS.map((o) => ({ value: o, label: o }))}
+                  />
+                </Form.Item>
+              </Col>
+            </Row>
+            <Form.Item label="问题描述" style={{ marginBottom: 0 }}>
+              <Input.TextArea
+                rows={2}
+                value={correction.problem}
+                onChange={(e) => setCorrection((c) => ({ ...c, problem: e.target.value }))}
+                data-testid="correct-problem"
+              />
+            </Form.Item>
+          </Space>
+        ) : null}
+      </Modal>
     </div>
   );
 }

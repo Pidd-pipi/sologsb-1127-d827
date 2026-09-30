@@ -1,3 +1,5 @@
+import type { Invalidation } from './rectify';
+
 /** 通行路线段 */
 export interface RouteSegment {
   id: string;
@@ -17,10 +19,17 @@ export interface RouteSegment {
   wheelchairPassable: boolean;
   /** 在整条路线中的顺序，从 1 开始 */
   order: number;
+  /** 核验记录变化导致判定失效：旧路段保留，需重算 */
+  invalid: boolean;
+  /** 失效原因（关联点位的最新核验变化） */
+  invalidReason: Invalidation | null;
   createdAt: string;
 }
 
-export type RouteSegmentDraft = Omit<RouteSegment, 'id' | 'createdAt' | 'wheelchairPassable'>;
+export type RouteSegmentDraft = Omit<
+  RouteSegment,
+  'id' | 'createdAt' | 'wheelchairPassable' | 'invalid' | 'invalidReason'
+>;
 
 /** 全线判定结果 */
 export interface RouteVerdict {
@@ -31,4 +40,8 @@ export interface RouteVerdict {
   totalSteps: number;
   maxCurbHeight: number;
   reasons: string[];
+  /** 全线是否含失效路段（核验记录变化后需重算） */
+  hasInvalid: boolean;
+  /** 失效原因汇总 */
+  invalidReasons: string[];
 }

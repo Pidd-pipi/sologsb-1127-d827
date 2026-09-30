@@ -8,6 +8,7 @@ import {
   Form,
   Input,
   InputNumber,
+  Modal,
   Row,
   Select,
   Space,
@@ -17,7 +18,13 @@ import {
   Typography,
 } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
-import { DeleteOutlined, NodeIndexOutlined, SaveOutlined, ThunderboltOutlined } from '@ant-design/icons';
+import {
+  DeleteOutlined,
+  NodeIndexOutlined,
+  SaveOutlined,
+  SyncOutlined,
+  ThunderboltOutlined,
+} from '@ant-design/icons';
 import StatusBadge from '../components/common/StatusBadge';
 import EmptyState from '../components/common/EmptyState';
 import { usePointStore } from '../stores/pointStore';
@@ -42,8 +49,16 @@ export default function Routes() {
     computeVerdict,
     saveRoute,
     resetDraft,
+    recomputeSegment,
   } = useRouteStore();
   const [saving, setSaving] = useState(false);
+  const [recomputing, setRecomputing] = useState<RouteSegment | null>(null);
+  const [recomputeDraft, setRecomputeDraft] = useState({
+    length: 0,
+    obstacleCount: 0,
+    stepCount: 0,
+    curbHeight: 0,
+  });
 
   const pointOptions = useMemo(
     () => points.map((p) => ({ value: p.id, label: `${p.code} ${p.name}` })),
@@ -76,6 +91,29 @@ export default function Routes() {
       message.error(`路线保存失败：${e instanceof Error ? e.message : String(e)}`);
     } finally {
       setSaving(false);
+    }
+  };
+
+  const invalidCount = useMemo(() => segments.filter((s) => s.invalid).length, [segments]);
+
+  const openRecompute = (seg: RouteSegment) => {
+    setRecomputing(seg);
+    setRecomputeDraft({
+      length: seg.length,
+      obstacleCount: seg.obstacleCount,
+      stepCount: seg.stepCount,
+      curbHeight: seg.curbHeight,
+    });
+  };
+
+  const handleRecompute = async () => {
+    if (!recomputing) return;
+    try {
+      await recomputeSegment(recomputing.id, recomputeDraft);
+      message.success('已按最新实测生成有效判定，旧失效记录保留');
+      setRecomputing(null);
+    } catch (e) {
+      message.error(`重新实测失败：${e instanceof Error ? e.message : String(e)}`);
     }
   };
 
@@ -167,19 +205,43 @@ export default function Routes() {
   ];
 
   const savedColumns: ColumnsType<RouteSegment> = [
-    { title: '路线名称', dataIndex: 'routeName', width: 200 },
-    { title: '段序', dataIndex: 'order', width: 70 },
+    { title: '路线名称', dataIndex: 'routeName', width: 180 },
+    { title: '段序', dataIndex: 'order', width: 60 },
     { title: '起点', dataIndex: 'fromPointId', render: (v: string) => nameOf(v) },
     { title: '终点', dataIndex: 'toPointId', render: (v: string) => nameOf(v) },
-    { title: '长度(m)', dataIndex: 'length', width: 100 },
-    { title: '障碍数', dataIndex: 'obstacleCount', width: 90 },
-    { title: '台阶数', dataIndex: 'stepCount', width: 90 },
-    { title: '路缘高差(cm)', dataIndex: 'curbHeight', width: 120 },
+    { title: '长度(m)', dataIndex: 'length', width: 90 },
+    { title: '障碍数', dataIndex: 'obstacleCount', width: 80 },
+    { title: '台阶数', dataIndex: 'stepCount', width: 80 },
+    { title: '路缘高差(cm)', dataIndex: 'curbHeight', width: 110 },
     {
-      title: '可轮椅通行',
+      title: '判定',
       dataIndex: 'wheelchairPassable',
-      width: 120,
-      render: (v: boolean) => <StatusBadge value={v ? '可通行' : '不可通行'} kind="route" />,
+      width: 110,
+      render: (v: boolean, row) =>
+        row.invalid ? (
+          <StatusBadge value="已失效" kind="generic" />
+        ) : (
+          <StatusBadge value={v ? '可通行' : '不可通行'} kind="route" />
+        ),
+    },
+    {
+      title: '失效原因 / 操作',
+      width: 220,
+      render: (_, row) =>
+        row.invalid ? (
+          <Space size={6}>
+            <Typography.Text type="warning" ellipsis style={{ maxWidth: 130 }} title={row.invalidReason?.reason}>
+              {row.invalidReason?.reason ?? '核验记录变化'}
+            </Typography.Text>
+            <Button size="small" type="primary" ghost icon={<SyncOutlined />} onClick={() => openRecompute(row)}>
+              重新实测
+            </Button>
+          </Space>
+        ) : (
+          <Typography.Text type="secondary" className="gb-muted">
+            判定有效
+          </Typography.Text>
+        ),
     },
   ];
 
@@ -354,13 +416,33 @@ export default function Routes() {
             {savedVerdicts.length ? (
               <Space direction="vertical" size={8} style={{ width: '100%' }}>
                 {savedVerdicts.map((v) => (
-                  <Space key={v.routeName} size={8} wrap>
-                    <StatusBadge value={v.passable ? '可通行' : '不可通行'} kind="route" />
-                    <Typography.Text>{v.routeName}</Typography.Text>
-                    <Tag>{v.totalLength} m</Tag>
-                    <Tag>台阶 {v.totalSteps}</Tag>
-                    <Tag>障碍 {v.totalObstacles}</Tag>
-                  </Space>
+                  <div key={v.routeName}>
+                    <Space size={8} wrap>
+                      <StatusBadge
+                        value={v.hasInvalid ? '已失效' : v.passable ? '可通行' : '不可通行'}
+                        kind={v.hasInvalid ? 'generic' : 'route'}
+                      />
+                      <Typography.Text>{v.routeName}</Typography.Text>
+                      <Tag>{v.totalLength} m</Tag>
+                      <Tag>台阶 {v.totalSteps}</Tag>
+                      <Tag>障碍 {v.totalObstacles}</Tag>
+                    </Space>
+                    {v.hasInvalid ? (
+                      <Alert
+                        style={{ marginTop: 6 }}
+                        type="warning"
+                        showIcon
+                        message="核验记录变化，以下路段判定失效，需重新实测"
+                        description={
+                          <ul style={{ margin: 0, paddingInlineStart: 18 }}>
+                            {v.invalidReasons.map((r) => (
+                              <li key={r}>{r}</li>
+                            ))}
+                          </ul>
+                        }
+                      />
+                    ) : null}
+                  </div>
                 ))}
               </Space>
             ) : (
@@ -370,7 +452,16 @@ export default function Routes() {
         </Col>
       </Row>
 
-      <Card title="已保存路段明细" size="small" style={{ marginTop: 16 }}>
+      <Card
+        title={
+          <Space size={8}>
+            <span>已保存路段明细</span>
+            {invalidCount ? <Tag color="warning">{invalidCount} 段已失效待重算</Tag> : null}
+          </Space>
+        }
+        size="small"
+        style={{ marginTop: 16 }}
+      >
         {segments.length ? (
           <Table<RouteSegment>
             rowKey="id"
@@ -378,11 +469,87 @@ export default function Routes() {
             pagination={{ pageSize: 8, hideOnSinglePage: true }}
             dataSource={segments}
             columns={savedColumns}
+            rowClassName={(row) => (row.invalid ? 'gb-invalid-row' : '')}
           />
         ) : (
           <EmptyState title="暂无路段记录" description="编制并保存后在此查看" compact />
         )}
       </Card>
+
+      <Modal
+        title={recomputing ? `重新实测 · ${recomputing.routeName} 第 ${recomputing.order} 段` : '重新实测'}
+        open={Boolean(recomputing)}
+        onCancel={() => setRecomputing(null)}
+        onOk={handleRecompute}
+        okText="保存重算结果"
+        destroyOnClose
+      >
+        {recomputing ? (
+          <Space direction="vertical" size={12} style={{ width: '100%' }}>
+            <Alert type="warning" showIcon message={recomputing.invalidReason?.reason ?? '核验记录变化，判定失效'} />
+            <Typography.Text type="secondary">
+              {nameOf(recomputing.fromPointId)} → {nameOf(recomputing.toPointId)}
+            </Typography.Text>
+            <Form layout="vertical">
+              <Row gutter={12}>
+                <Col span={12}>
+                  <Form.Item label="长度(m)" style={{ marginBottom: 8 }}>
+                    <InputNumber
+                      min={1}
+                      max={100000}
+                      style={{ width: '100%' }}
+                      value={recomputeDraft.length}
+                      onChange={(v) => setRecomputeDraft((c) => ({ ...c, length: Number(v ?? 0) }))}
+                    />
+                  </Form.Item>
+                </Col>
+                <Col span={12}>
+                  <Form.Item label="路缘高差(cm)" style={{ marginBottom: 8 }}>
+                    <InputNumber
+                      min={0}
+                      max={60}
+                      step={0.5}
+                      style={{ width: '100%' }}
+                      value={recomputeDraft.curbHeight}
+                      onChange={(v) => setRecomputeDraft((c) => ({ ...c, curbHeight: Number(v ?? 0) }))}
+                    />
+                  </Form.Item>
+                </Col>
+                <Col span={12}>
+                  <Form.Item label="沿途障碍数" style={{ marginBottom: 8 }}>
+                    <InputNumber
+                      min={0}
+                      max={50}
+                      style={{ width: '100%' }}
+                      value={recomputeDraft.obstacleCount}
+                      onChange={(v) => setRecomputeDraft((c) => ({ ...c, obstacleCount: Number(v ?? 0) }))}
+                    />
+                  </Form.Item>
+                </Col>
+                <Col span={12}>
+                  <Form.Item label="台阶数" style={{ marginBottom: 8 }}>
+                    <InputNumber
+                      min={0}
+                      max={50}
+                      style={{ width: '100%' }}
+                      value={recomputeDraft.stepCount}
+                      onChange={(v) => setRecomputeDraft((c) => ({ ...c, stepCount: Number(v ?? 0) }))}
+                    />
+                  </Form.Item>
+                </Col>
+              </Row>
+            </Form>
+            <Typography.Text>
+              重算判定：
+              <StatusBadge
+                value={judgeSegment(recomputeDraft).passable ? '可通行' : '不可通行'}
+                kind="route"
+                bordered
+              />
+            </Typography.Text>
+          </Space>
+        ) : null}
+      </Modal>
     </div>
   );
 }

@@ -40,23 +40,34 @@ docker compose down
 | `/routes` | 通行路线编制：选点自动串联路段，逐段填障碍数/台阶数/路缘高差，输出全线判定 | RouteSegment / AccessPoint |
 | `/map` | 设施地图：按设施类型着色渲染点位，点选弹出核验摘要 | AccessPoint / Inspection |
 | `/rectify` | 整改清单：按状态与期限分组、逾期置顶，登记复检结果 | RectifyPlan / AccessPoint |
+| `/import` | 离线核验包导入：逐记录校验合并，坏记录不挡住其他记录，失败从检查点恢复 | Inspection / RectifyPlan / RouteSegment |
 
 ## 数据模型（`src/types/` 独立文件）
 
 | 模型 | 文件 | 关键字段 |
 | --- | --- | --- |
 | AccessPoint | `src/types/point.ts` | 点位编号、名称、设施类型、经纬度、行政区、所在道路或建筑、建成年代、养护单位 |
-| Inspection | `src/types/inspection.ts` | 核验日期、核验人、坡度 %、净宽 cm、扶手、盲道连续性、占用情况、结论、问题描述 |
-| RouteSegment | `src/types/route.ts` | 路线名称、起点/终点点位、长度、障碍数、台阶数、路缘高差、是否可轮椅通行 |
-| RectifyPlan | `src/types/rectify.ts` | 点位 id、整改要求、责任单位、整改期限、复检日期、状态 |
+| Inspection | `src/types/inspection.ts` | 核验日期、采集时间、核验人、坡度 %、净宽 cm、扶手、盲道连续性、占用情况、结论、问题描述、来源、是否被覆盖、是否手工更正 |
+| RouteSegment | `src/types/route.ts` | 路线名称、起点/终点点位、长度、障碍数、台阶数、路缘高差、是否可轮椅通行、是否失效、失效原因 |
+| RectifyPlan | `src/types/rectify.ts` | 点位 id、整改要求、责任单位、整改期限、复检日期、状态、是否失效、失效原因 |
+
+## 离线核验包合并（`src/utils/offlineImport.ts`）
+
+督导员离线核验后交回 JSON 包（纯数组或含 `inspections` 字段的对象均可），导入时逐记录处理：
+
+- **坏记录不挡住其他记录**：点位编号不存在、坡度/净宽越界等记录单独标记失败原因，其余记录正常入库。
+- **检查点恢复**：每条记录处理后写入 localStorage 检查点（`gbaccessmap-import-checkpoint`），中途失败后下次导入同一包从已处理位置继续，不重复入库。
+- **同点位同日多份核验**：采集时间（`collectedAt`）晚的覆盖旧结果，旧记录标记 `superseded` 保留；已手工更正（`source=manual` 或 `manualEdited=true`）的记录不回退。
+- **失效重算**：核验记录变更后，该点位的整改条目与途经路线自动标记 `invalidated` 并显示原因，整改条目按最新结论重算补建，路线重算可通行判定；旧记录保留。
 
 ## 数据存储
 
 - **IndexedDB（Dexie，库名 `gbaccessmap-db`）**：业务数据。含版本号与升级迁移：
   - `v1` 建 `points` / `inspections` 表；
   - `v2` 增加 `routes` 表与 `pointId` 相关索引；
-  - `v3` 增加 `rectifies` 表，并为历史「不合格」核验补建整改条目。
-- **localStorage**：点位登记表单草稿（`gbaccessmap-draft:point-new`）与 UI 偏好（`gbaccessmap-ui`）。
+  - `v3` 增加 `rectifies` 表，并为历史「不合格」核验补建整改条目；
+  - `v4` 为核验记录加 `collectedAt` / `source` / `superseded` / `manualEdited`，为整改条目与路线加 `invalidated` / `invalidReason`（离线合并与失效重算）。
+- **localStorage**：点位登记表单草稿（`gbaccessmap-draft:point-new`）、UI 偏好（`gbaccessmap-ui`）与离线导入检查点（`gbaccessmap-import-checkpoint`）。
 - 首次打开时自动写入一批示例数据，便于直接体验。
 - 容器无状态：不使用数据库服务、不挂载命名卷，清空浏览器存储即可重置数据。
 
@@ -85,10 +96,10 @@ sologsb-1127/
         ├── stores/{pointStore,routeStore,uiStore}.ts
         ├── components/common/{MapPanel,StatusBadge,FacilityIcon,MeasureInput,EmptyState}.tsx
         ├── hooks/{useAmapLoader,useInspectionFilter,useLocalDraft}.ts
-        ├── pages/{Overview,PointNew,PointDetail,Routes,MapView,Rectify}.tsx
+        ├── pages/{Overview,PointNew,PointDetail,Routes,MapView,Rectify,ImportOffline}.tsx
         ├── layouts/AppLayout.tsx
         ├── router/index.tsx
-        └── utils/{routeCheck,geo,format}.ts
+        └── utils/{routeCheck,geo,format,offlineImport}.ts
 ```
 
 ## 判定阈值（`src/utils/routeCheck.ts`）

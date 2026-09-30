@@ -12,6 +12,7 @@ import {
   Space,
   Table,
   Tag,
+  Tooltip,
   Typography,
 } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
@@ -139,6 +140,18 @@ export default function Rectify() {
       dataIndex: 'status',
       width: 100,
       render: (v: string) => <StatusBadge value={v} kind="rectify" />,
+    },
+    {
+      title: '失效',
+      width: 90,
+      render: (_, row) =>
+        row.invalidated ? (
+          <Tooltip title={row.invalidReason}>
+            <Tag color="warning">已失效</Tag>
+          </Tooltip>
+        ) : (
+          <Typography.Text type="secondary">—</Typography.Text>
+        ),
     },
     {
       title: '操作',

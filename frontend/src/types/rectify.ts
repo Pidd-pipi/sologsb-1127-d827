@@ -16,10 +16,14 @@ export interface RectifyPlan {
   /** 复检日期 YYYY-MM-DD，未复检为空字符串 */
   recheckDate: string;
   status: RectifyStatus;
+  /** 核验记录变更导致本条失效，需重新核定 */
+  invalidated: boolean;
+  /** 失效原因（展示用） */
+  invalidReason: string;
   createdAt: string;
 }
 
-export type RectifyPlanDraft = Omit<RectifyPlan, 'id' | 'createdAt'>;
+export type RectifyPlanDraft = Omit<RectifyPlan, 'id' | 'createdAt' | 'invalidated' | 'invalidReason'>;
 
 /** 按状态与期限分组后的清单结构 */
 export interface RectifyGroup {

@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { db } from '../db';
 import type { AccessPoint } from '../types/point';
+import type { Inspection } from '../types/inspection';
 import type { RouteSegment } from '../types/route';
 import { makeId, toPlain } from '../utils/format';
 import { judgeSegment, buildVerdict } from '../utils/routeCheck';
@@ -128,8 +129,25 @@ export const useRouteStore = create<RouteState>((set, get) => ({
 
   saveRoute: async () => {
     const { draftSegments, draftName } = get();
-    const rows: RouteSegment[] = draftSegments.map((seg) =>
-      toPlain({
+    // 取各点位最新核验结论，作为通行判定的参考
+    const allInspections = await db.inspections.toArray();
+    const currentByPoint = new Map<string, Inspection>();
+    for (const i of allInspections) {
+      if (i.superseded) continue;
+      const cur = currentByPoint.get(i.pointId);
+      if (!cur || cur.date < i.date || (cur.date === i.date && cur.collectedAt < i.collectedAt)) {
+        currentByPoint.set(i.pointId, i);
+      }
+    }
+    const rows: RouteSegment[] = draftSegments.map((seg) => {
+      const segJudge = judgeSegment(seg);
+      let passable = segJudge.passable;
+      const fromInsp = currentByPoint.get(seg.fromPointId);
+      const toInsp = currentByPoint.get(seg.toPointId);
+      if (fromInsp?.conclusion === '不合格' || toInsp?.conclusion === '不合格') {
+        passable = false;
+      }
+      return toPlain({
         id: makeId('rts'),
         routeName: draftName || '未命名路线',
         fromPointId: seg.fromPointId,
@@ -138,11 +156,13 @@ export const useRouteStore = create<RouteState>((set, get) => ({
         obstacleCount: seg.obstacleCount,
         stepCount: seg.stepCount,
         curbHeight: seg.curbHeight,
-        wheelchairPassable: judgeSegment(seg).passable,
+        wheelchairPassable: passable,
         order: seg.order,
+        invalidated: false,
+        invalidReason: '',
         createdAt: new Date().toISOString(),
-      }),
-    );
+      });
+    });
     if (!rows.length) return 0;
     await db.routes.bulkPut(rows);
     const all = await db.routes.toArray();

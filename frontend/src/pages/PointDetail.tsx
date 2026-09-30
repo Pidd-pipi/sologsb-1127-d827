@@ -15,6 +15,7 @@ import {
   Switch,
   Table,
   Tag,
+  Tooltip,
   Typography,
 } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
@@ -57,9 +58,13 @@ export default function PointDetail() {
     () =>
       inspections
         .filter((i) => i.pointId === id)
-        .sort((a, b) => (a.date < b.date ? 1 : -1)),
+        .sort((a, b) => {
+          if (a.date !== b.date) return a.date < b.date ? 1 : -1;
+          return a.collectedAt < b.collectedAt ? 1 : a.collectedAt > b.collectedAt ? -1 : 0;
+        }),
     [inspections, id],
   );
+  const latest = useMemo(() => history.find((i) => !i.superseded), [history]);
   const plans = useMemo(
     () =>
       rectifies.filter((r) => r.pointId === id).sort((a, b) => (a.deadline < b.deadline ? -1 : 1)),
@@ -175,6 +180,20 @@ export default function PointDetail() {
       render: (v: string) => <StatusBadge value={v} kind="conclusion" />,
     },
     {
+      title: '状态',
+      width: 100,
+      render: (_, row) =>
+        row.superseded ? (
+          <Tag color="default">已覆盖</Tag>
+        ) : row.source === 'offline' ? (
+          <Tag color="geekblue">离线导入</Tag>
+        ) : row.source === 'seed' ? (
+          <Tag>示例</Tag>
+        ) : (
+          <Tag color="green">手工</Tag>
+        ),
+    },
+    {
       title: '问题描述',
       dataIndex: 'problem',
       ellipsis: true,
@@ -211,9 +230,19 @@ export default function PointDetail() {
       width: 100,
       render: (v: string) => <StatusBadge value={v} kind="rectify" />,
     },
+    {
+      title: '失效',
+      width: 90,
+      render: (_, row) =>
+        row.invalidated ? (
+          <Tooltip title={row.invalidReason}>
+            <Tag color="warning">已失效</Tag>
+          </Tooltip>
+        ) : (
+          <Typography.Text type="secondary">—</Typography.Text>
+        ),
+    },
   ];
-
-  const latest = history[0];
 
   return (
     <div>

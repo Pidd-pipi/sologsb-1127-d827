@@ -14,6 +14,7 @@ import {
   Statistic,
   Table,
   Tag,
+  Tooltip,
   Typography,
 } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
@@ -180,6 +181,18 @@ export default function Routes() {
       dataIndex: 'wheelchairPassable',
       width: 120,
       render: (v: boolean) => <StatusBadge value={v ? '可通行' : '不可通行'} kind="route" />,
+    },
+    {
+      title: '状态',
+      width: 100,
+      render: (_, row) =>
+        row.invalidated ? (
+          <Tooltip title={row.invalidReason}>
+            <Tag color="warning">已失效</Tag>
+          </Tooltip>
+        ) : (
+          <Typography.Text type="secondary">有效</Typography.Text>
+        ),
     },
   ];
 

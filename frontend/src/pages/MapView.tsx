@@ -26,12 +26,20 @@ export default function MapView() {
 
   const latestOf = (pointId: string) =>
     inspections
-      .filter((i) => i.pointId === pointId)
-      .sort((a, b) => (a.date < b.date ? 1 : -1))[0];
+      .filter((i) => i.pointId === pointId && !i.superseded)
+      .sort((a, b) => {
+        if (a.date !== b.date) return a.date < b.date ? 1 : -1;
+        return a.collectedAt < b.collectedAt ? 1 : a.collectedAt > b.collectedAt ? -1 : 0;
+      })[0];
 
   const active = points.find((p) => p.id === activeId);
   const activeInspections = active
-    ? inspections.filter((i) => i.pointId === active.id).sort((a, b) => (a.date < b.date ? 1 : -1))
+    ? inspections
+        .filter((i) => i.pointId === active.id)
+        .sort((a, b) => {
+          if (a.date !== b.date) return a.date < b.date ? 1 : -1;
+          return a.collectedAt < b.collectedAt ? 1 : a.collectedAt > b.collectedAt ? -1 : 0;
+        })
     : [];
   const activePlans = active ? rectifies.filter((r) => r.pointId === active.id) : [];
 
@@ -149,6 +157,8 @@ export default function MapView() {
                       <Space size={8} wrap>
                         <Typography.Text strong>{i.date}</Typography.Text>
                         <StatusBadge value={i.conclusion} kind="conclusion" />
+                        {i.superseded ? <Tag color="default">已覆盖</Tag> : null}
+                        {i.source === 'offline' ? <Tag color="geekblue">离线</Tag> : null}
                         <Tag>坡度 {i.slope}%</Tag>
                         <Tag>净宽 {i.clearWidth}cm</Tag>
                         {i.occupied !== '无' ? <Tag color="orange">{i.occupied}</Tag> : null}
@@ -173,12 +183,18 @@ export default function MapView() {
                     <div key={r.id}>
                       <Space size={8} wrap>
                         <StatusBadge value={r.status} kind="rectify" />
+                        {r.invalidated ? <Tag color="warning">已失效</Tag> : null}
                         {isOverdue(r.deadline, r.status) ? <Tag color="error">已逾期</Tag> : null}
                         <Typography.Text type="secondary" className="gb-muted">
                           期限 {r.deadline}
                         </Typography.Text>
                       </Space>
                       <div>{r.requirement}</div>
+                      {r.invalidated && r.invalidReason ? (
+                        <Typography.Text type="warning" className="gb-muted" style={{ fontSize: 12 }}>
+                          {r.invalidReason}
+                        </Typography.Text>
+                      ) : null}
                     </div>
                   ))}
                 </Space>

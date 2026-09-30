@@ -17,10 +17,14 @@ export interface RouteSegment {
   wheelchairPassable: boolean;
   /** 在整条路线中的顺序，从 1 开始 */
   order: number;
+  /** 核验记录变更导致本段判定失效，需重新核验 */
+  invalidated: boolean;
+  /** 失效原因（展示用） */
+  invalidReason: string;
   createdAt: string;
 }
 
-export type RouteSegmentDraft = Omit<RouteSegment, 'id' | 'createdAt' | 'wheelchairPassable'>;
+export type RouteSegmentDraft = Omit<RouteSegment, 'id' | 'createdAt' | 'wheelchairPassable' | 'invalidated' | 'invalidReason'>;
 
 /** 全线判定结果 */
 export interface RouteVerdict {

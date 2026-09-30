@@ -13,6 +13,7 @@ export const DB_NAME = 'gbaccessmap-db';
  * v1 建 points / inspections
  * v2 加 routes 表与 pointId 索引
  * v3 加 rectifies 表，并为历史不合格核验补建整改条目
+ * v4 加 collectedAt / source / superseded / manualEdited（核验合并）与 invalidated / invalidReason（失效重算）
  */
 class AccessMapDb extends Dexie {
   points!: Table<AccessPoint, string>;
@@ -68,8 +69,40 @@ class AccessMapDb extends Dexie {
             deadline: addDays(insp.date || todayStr(), 30),
             recheckDate: '',
             status: '待整改',
+            invalidated: false,
+            invalidReason: '',
             createdAt: new Date().toISOString(),
           });
+        }
+      });
+    this.version(4)
+      .stores({
+        points: 'id, code, facilityType, district, name',
+        inspections: 'id, pointId, date, conclusion, superseded, source',
+        routes: 'id, routeName, fromPointId, toPointId, order, invalidated',
+        rectifies: 'id, pointId, status, deadline, invalidated',
+      })
+      .upgrade(async (tx) => {
+        // v4：核验合并与失效重算相关字段补默认值
+        const inspTable = tx.table('inspections');
+        const insps: Inspection[] = await inspTable.toArray();
+        for (const insp of insps) {
+          await inspTable.update(insp.id, {
+            collectedAt: insp.createdAt || new Date().toISOString(),
+            source: 'seed',
+            superseded: false,
+            manualEdited: false,
+          });
+        }
+        const rectTable = tx.table('rectifies');
+        const rects: RectifyPlan[] = await rectTable.toArray();
+        for (const r of rects) {
+          await rectTable.update(r.id, { invalidated: false, invalidReason: '' });
+        }
+        const routeTable = tx.table('routes');
+        const routes: RouteSegment[] = await routeTable.toArray();
+        for (const rt of routes) {
+          await routeTable.update(rt.id, { invalidated: false, invalidReason: '' });
         }
       });
   }
@@ -315,6 +348,7 @@ function buildSeed() {
       id: `ins-seed-${i + 1}`,
       pointId: s.pointId,
       date: s.date,
+      collectedAt: `${s.date}T10:00:00.000Z`,
       inspector: s.inspector,
       slope: s.slope,
       clearWidth: s.clearWidth,
@@ -323,6 +357,9 @@ function buildSeed() {
       occupied: s.occupied,
       conclusion: judged.conclusion,
       problem: s.problem,
+      source: 'seed',
+      superseded: false,
+      manualEdited: false,
       createdAt: now,
     };
   });
@@ -340,6 +377,8 @@ function buildSeed() {
         curbHeight: r.curbHeight,
         wheelchairPassable: r.stepCount === 0 && r.curbHeight <= 3 && r.obstacleCount <= 2,
         order: i,
+        invalidated: false,
+        invalidReason: '',
         createdAt: now,
       });
     }
@@ -353,6 +392,8 @@ function buildSeed() {
       deadline: addDays(today, -21),
       recheckDate: '',
       status: '待整改',
+      invalidated: false,
+      invalidReason: '',
       createdAt: now,
     },
     {
@@ -363,6 +404,8 @@ function buildSeed() {
       deadline: addDays(today, -6),
       recheckDate: '',
       status: '待整改',
+      invalidated: false,
+      invalidReason: '',
       createdAt: now,
     },
     {
@@ -373,6 +416,8 @@ function buildSeed() {
       deadline: addDays(today, 18),
       recheckDate: '',
       status: '待整改',
+      invalidated: false,
+      invalidReason: '',
       createdAt: now,
     },
     {
@@ -383,6 +428,8 @@ function buildSeed() {
       deadline: addDays(today, -40),
       recheckDate: addDays(today, -12),
       status: '已整改',
+      invalidated: false,
+      invalidReason: '',
       createdAt: now,
     },
   ];

@@ -49,6 +49,7 @@ export function useInspectionFilter(): InspectionFilterResult {
   const filteredInspections = useMemo(
     () =>
       inspections.filter((i) => {
+        if (i.superseded) return false; // 被覆盖的旧记录不参与筛选与统计
         if (!filteredPointIds.has(i.pointId)) return false;
         if (filter.conclusion && i.conclusion !== filter.conclusion) return false;
         if (filter.fromDate && i.date < filter.fromDate) return false;
@@ -61,8 +62,11 @@ export function useInspectionFilter(): InspectionFilterResult {
   const latestByPoint = useMemo(() => {
     const map = new Map<string, Inspection>();
     for (const i of inspections) {
+      if (i.superseded) continue; // 被覆盖的旧记录不作为最新结论
       const cur = map.get(i.pointId);
-      if (!cur || cur.date < i.date) map.set(i.pointId, i);
+      if (!cur || cur.date < i.date || (cur.date === i.date && cur.collectedAt < i.collectedAt)) {
+        map.set(i.pointId, i);
+      }
     }
     return map;
   }, [inspections]);
